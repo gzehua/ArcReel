@@ -42,10 +42,10 @@ class TestDataValidator:
 
     def test_validate_project_reports_missing_and_invalid_fields(self, tmp_path):
         project_dir = tmp_path / "projects" / "demo"
+        # title 字段完全缺失才报错;空字符串在新策略下属于合法状态(前端 i18n 兜底)
         _write_json(
             project_dir / "project.json",
             {
-                "title": "",
                 "content_mode": "invalid",
                 "style": "",
                 "characters": {"A": []},
@@ -61,12 +61,40 @@ class TestDataValidator:
         result = DataValidator(projects_root=str(tmp_path / "projects")).validate_project("demo")
 
         assert not result.valid
-        assert any("title" in error for error in result.errors)
+        # title 完全缺失 → "缺少必填字段",区别于"字段类型错误"
+        assert any("缺少必填字段: title" in error for error in result.errors)
         assert any("content_mode" in error for error in result.errors)
         assert any("角色 'A' 数据格式错误" in error for error in result.errors)
         # scenes/props 缺少 description 也应报错
         assert any("场景 'X'" in error for error in result.errors)
         assert any("道具 'Y'" in error for error in result.errors)
+
+    def test_validate_project_rejects_non_string_title(self, tmp_path):
+        # title 字段存在但类型不是 string(如 int / null / list)应给出区分于"缺失"的明确文案,
+        # 避免调用方误以为字段没写。
+        project_dir = tmp_path / "projects" / "demo"
+        payload = _project_payload()
+        payload["title"] = 123
+        _write_json(project_dir / "project.json", payload)
+
+        result = DataValidator(projects_root=str(tmp_path / "projects")).validate_project("demo")
+
+        assert not result.valid
+        assert any("字段类型错误: title 应为字符串" in error for error in result.errors)
+        assert not any("缺少必填字段: title" in error for error in result.errors)
+
+    def test_validate_project_allows_empty_title(self, tmp_path):
+        # title 为空字符串属于合法状态:前端会以「未命名项目」i18n 兜底,
+        # lib 层不再要求 title 非空,避免 ProjectManager 写路径被迫存 slug 作 fallback。
+        project_dir = tmp_path / "projects" / "demo"
+        payload = _project_payload()
+        payload["title"] = ""
+        _write_json(project_dir / "project.json", payload)
+
+        result = DataValidator(projects_root=str(tmp_path / "projects")).validate_project("demo")
+
+        assert result.valid
+        assert not any("title" in error for error in result.errors)
 
     def test_validate_episode_narration_success_with_warnings(self, tmp_path):
         project_dir = tmp_path / "projects" / "demo"
